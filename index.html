@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenRouter LLM Chat</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1><i class="fas fa-robot"></i> OpenRouter LLM Chat</h1>
+                <div class="header-controls">
+                    <div class="model-selector">
+                        <label for="model-select">模型选择:</label>
+                        <select id="model-select">
+                            <!-- 免费模型 -->
+                            <optgroup label="🆓 免费模型">
+                                <option value="google/gemini-2.5-flash-image-preview:free">Gemini 2.5 Flash (免费)</option>
+                                <option value="google/gemma-2-9b-it:free">Gemma 2 9B (免费)</option>
+                                <option value="meta-llama/llama-3.2-3b-instruct:free">Llama 3.2 3B (免费)</option>
+                                <option value="meta-llama/llama-3.2-1b-instruct:free">Llama 3.2 1B (免费)</option>
+                                <option value="microsoft/phi-3-mini-128k-instruct:free">Phi-3 Mini (免费)</option>
+                                <option value="huggingface/zephyr-7b-beta:free">Zephyr 7B (免费)</option>
+                                <option value="openchat/openchat-7b:free">OpenChat 7B (免费)</option>
+                                <option value="gryphe/mythomist-7b:free">Mythomist 7B (免费)</option>
+                                <option value="undi95/toppy-m-7b:free">Toppy M 7B (免费)</option>
+                            </optgroup>
+                            <!-- 付费模型 -->
+                            <optgroup label="💰 付费模型">
+                                <option value="openai/gpt-4o">GPT-4o</option>
+                                <option value="openai/gpt-4o-mini">GPT-4o Mini</option>
+                                <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet</option>
+                                <option value="anthropic/claude-3-haiku">Claude 3 Haiku</option>
+                                <option value="google/gemini-pro-1.5">Gemini Pro 1.5</option>
+                                <option value="meta-llama/llama-3.1-405b-instruct">Llama 3.1 405B</option>
+                                <option value="meta-llama/llama-3.1-70b-instruct">Llama 3.1 70B</option>
+                                <option value="mistralai/mistral-large">Mistral Large</option>
+                                <option value="cohere/command-r-plus">Command R+</option>
+                                <option value="perplexity/llama-3.1-sonar-large-128k-online">Perplexity Sonar</option>
+                                <option value="deepseek/deepseek-chat">DeepSeek Chat</option>
+                                <option value="qwen/qwen-2.5-72b-instruct">通义千问 2.5 72B</option>
+                            </optgroup>
+                        </select>
+                    </div>
+                    <button id="api-key-btn" class="btn btn-secondary">
+                        <i class="fas fa-key"></i> API Key
+                    </button>
+                    <button id="new-chat-btn" class="btn btn-primary">
+                        <i class="fas fa-plus"></i> 新对话
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- API Key Modal -->
+        <div id="api-key-modal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3><i class="fas fa-key"></i> 设置 OpenRouter API Key</h3>
+                    <span class="close">&times;</span>
+                </div>
+                <div class="modal-body">
+                    <p>请输入您的 OpenRouter API Key。您可以在 <a href="https://openrouter.ai/keys" target="_blank">OpenRouter Keys</a> 页面获取。</p>
+                    <input type="password" id="api-key-input" placeholder="sk-or-v1-..." class="input-field">
+                    <div class="modal-actions">
+                        <button id="save-api-key" class="btn btn-primary">保存</button>
+                        <button id="cancel-api-key" class="btn btn-secondary">取消</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content Area with Split Layout -->
+        <main class="main-content">
+            <div class="split-container">
+                <!-- Left Sidebar: Conversation List -->
+                <aside class="conversation-sidebar">
+                    <div class="sidebar-header">
+                        <h3><i class="fas fa-history"></i> 会话历史 <span id="conversation-count" class="conversation-count">(0)</span></h3>
+                        <button id="clear-all-btn" class="clear-all-btn" title="清空所有对话">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                    <div class="conversation-list" id="conversation-list">
+                        <!-- Conversations will be loaded here -->
+                    </div>
+                    <div class="load-more-container">
+                        <button id="load-more-btn" class="btn btn-secondary btn-sm" style="display: none;">
+                            <i class="fas fa-chevron-down"></i> 加载更多
+                        </button>
+                    </div>
+                </aside>
+
+                <!-- Right Side: Chat Area -->
+                <div class="chat-container">
+                    <div id="chat-messages" class="chat-messages">
+                        <div class="welcome-message">
+                            <div class="welcome-content">
+                                <i class="fas fa-comments"></i>
+                                <h2>欢迎使用 OpenRouter LLM Chat</h2>
+                                <p>选择一个模型并开始对话。您可以在对话过程中随时切换不同的模型。</p>
+                                <div class="features">
+                                    <div class="feature">
+                                        <i class="fas fa-exchange-alt"></i>
+                                        <span>实时模型切换</span>
+                                    </div>
+                                    <div class="feature">
+                                        <i class="fas fa-history"></i>
+                                        <span>多会话管理</span>
+                                    </div>
+                                    <div class="feature">
+                                        <i class="fas fa-shield-alt"></i>
+                                        <span>安全的API调用</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="input-container">
+                        <div class="input-wrapper">
+                            <textarea id="message-input" placeholder="输入您的消息..." rows="1"></textarea>
+                            <button id="send-btn" class="send-btn" disabled>
+                                <i class="fas fa-paper-plane"></i>
+                            </button>
+                        </div>
+                        <div class="input-info">
+                            <span id="current-model-display">当前模型: Gemini 2.5 Flash (免费)</span>
+                            <span id="current-role-display">当前角色: 默认助手</span>
+                            <span id="message-count">消息数: 0</span>
+                            <button id="context-settings-btn" class="settings-btn" title="上下文设置">
+                                <i class="fas fa-cog"></i>
+                            </button>
+                            <button id="role-settings-btn" class="settings-btn" title="角色设置">
+                                <i class="fas fa-user-cog"></i>
+                            </button>
+                            <div class="search-toggle-container">
+                                <label class="search-toggle-label">
+                                    <input type="checkbox" id="search-toggle" class="search-toggle-input">
+                                    <span class="search-toggle-slider"></span>
+                                    <i class="fas fa-search"></i>
+                                </label>
+                                <span id="search-status" class="search-status">搜索已关闭</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Context Settings Modal -->
+        <div id="context-settings-modal" class="modal" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3><i class="fas fa-cog"></i> 上下文管理设置</h3>
+                    <button class="close-btn" id="close-context-settings">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="setting-group">
+                        <label for="context-threshold">上下文保留轮数：</label>
+                        <input type="number" id="context-threshold" min="5" max="50" value="10">
+                        <small>超过此轮数时自动总结早期对话</small>
+                    </div>
+                    <div class="setting-group">
+                        <label>
+                            <input type="checkbox" id="auto-summarize" checked>
+                            启用自动总结
+                        </label>
+                        <small>自动将早期对话总结为备忘录</small>
+                    </div>
+                    <div class="setting-group" id="memo-section" style="display: none;">
+                        <label for="conversation-memo">当前对话备忘录：</label>
+                        <textarea id="conversation-memo" rows="4" placeholder="暂无备忘录"></textarea>
+                        <button id="save-memo-btn" class="btn btn-primary">保存备忘录</button>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="save-context-settings" class="btn btn-primary">保存设置</button>
+                    <button id="cancel-context-settings" class="btn btn-secondary">取消</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Status Bar -->
+        <div id="status-bar" class="status-bar">
+            <span id="status-text">就绪</span>
+        </div>
+    </div>
+
+    <!-- Role Settings Modal -->
+    <div id="role-settings-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>角色设置</h3>
+                <button id="close-role-settings" class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="role-select">选择角色:</label>
+                    <select id="role-select" class="form-control">
+                        <!-- Options populated by JavaScript -->
+                    </select>
+                    <p id="role-description" class="role-description">通用AI助手，可以回答各种问题</p>
+                </div>
+                
+                <div class="custom-role-section">
+                    <h4>创建自定义角色</h4>
+                    <div class="form-group">
+                        <label for="custom-role-name">角色名称:</label>
+                        <input type="text" id="custom-role-name" class="form-control" placeholder="例如：专业律师">
+                    </div>
+                    <div class="form-group">
+                        <label for="custom-role-desc">角色描述:</label>
+                        <input type="text" id="custom-role-desc" class="form-control" placeholder="例如：专业的法律顾问，擅长合同和法律咨询">
+                    </div>
+                    <div class="form-group">
+                        <label for="custom-role-prompt">系统提示词:</label>
+                        <textarea id="custom-role-prompt" class="form-control" rows="4" placeholder="例如：你是一位经验丰富的律师，请用专业、准确的语言回答法律相关问题..."></textarea>
+                    </div>
+                    <button id="add-custom-role" class="btn btn-primary">添加角色</button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="save-role-settings" class="btn btn-primary">确定</button>
+                <button id="cancel-role-settings" class="btn btn-secondary">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
