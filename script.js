@@ -375,7 +375,7 @@ class OpenRouterChat {
             try {
                 this.setStatus('正在搜索相关信息...');
                 console.log('Starting search for:', userMessage);
-                const searchContext = await this.performDuckDuckGoSearch(userMessage);
+                const searchContext = await this.performSmartSearch(userMessage);
                 console.log('Search context received:', searchContext);
                 if (searchContext) {
                     messagesToSend.push({
@@ -976,237 +976,152 @@ class OpenRouterChat {
         }
     }
     
-    async performDuckDuckGoSearch(query) {
+    /**
+     * Performs a smart search by routing the query to the most appropriate API.
+     * Due to client-side limitations (like CORS), it's not feasible to directly
+     * scrape a search engine like DuckDuckGo. Instead, this function uses a
+     * cascade of reliable, public, CORS-friendly APIs.
+     * @param {string} query The user's search query.
+     * @returns {Promise<string|null>} A formatted string with search context, or null.
+     */
+    async performSmartSearch(query) {
         const currentDate = new Date().toLocaleDateString('zh-CN', {
             year: 'numeric',
-            month: 'long', 
+            month: 'long',
             day: 'numeric',
             weekday: 'long'
         });
-        
-        // Handle time queries immediately
+
+        // 1. Handle time-based queries directly
         const timeQueries = ['今天', '现在', '当前时间', '几号', '日期', '星期'];
         if (timeQueries.some(keyword => query.includes(keyword))) {
             return `搜索查询: "${query}"\n\n⏰ 当前时间信息: 今天是${currentDate}\n\n请基于这个准确的时间信息回答用户的问题。`;
         }
-        
-        // Check cache
+
+        // 2. Check cache for previous results
         const cacheKey = query.toLowerCase().trim();
         if (this.searchCache.has(cacheKey)) {
             const cachedResult = this.searchCache.get(cacheKey);
             return `搜索查询: "${query}"\n\n${cachedResult}\n\n当前时间: ${currentDate}\n\n(来自缓存)`;
         }
-        
-        console.log('🔍 Starting web search for:', query);
-        
-        // Try Wikipedia search (most reliable)
-        try {
-            const wikiResult = await this.searchWikipediaAPI(query);
-            if (wikiResult) {
-                this.searchCache.set(cacheKey, wikiResult);
-                return `搜索查询: "${query}"\n\n${wikiResult}\n\n当前时间: ${currentDate}`;
-            }
-        } catch (error) {
-            console.log('Wikipedia search failed:', error);
-        }
-        
-        // Try web search
+
+        console.log('🔍 Starting smart search for:', query);
+
+        // 3. Try specialized Web APIs (e.g., weather, countries)
         try {
             const webResult = await this.searchWebAPI(query);
-            if (webResult) {
-                this.searchCache.set(cacheKey, webResult);
-                return `搜索查询: "${query}"\n\n${webResult}\n\n当前时间: ${currentDate}`;
+            if (webResult && webResult.context) {
+                this.searchCache.set(cacheKey, webResult.context);
+                this.setStatus(webResult.status);
+                return `搜索查询: "${query}"\n\n${webResult.context}\n\n当前时间: ${currentDate}`;
             }
         } catch (error) {
-            console.log('Web search failed:', error);
+            console.error('Web API search failed:', error);
+        }
+
+        // 4. Fallback to Wikipedia for general knowledge
+        try {
+            this.setStatus('正在搜索维基百科...');
+            const wikiResult = await this.searchWikipediaAPI(query);
+            if (wikiResult) {
+                const context = `📚 维基百科搜索结果:\n${wikiResult}`;
+                this.searchCache.set(cacheKey, context);
+                return `搜索查询: "${query}"\n\n${context}\n\n当前时间: ${currentDate}`;
+            }
+        } catch (error) {
+            console.error('Wikipedia search failed:', error);
+        }
+
+        // 5. Final fallback message if no specific results are found
+        return `搜索查询: "${query}"\n\nℹ️ 未在特定信息源中找到直接结果。现在将结合我的知识库为您提供最相关的答案。\n\n当前时间: ${currentDate}`;
+    }
+
+    /**
+     * Searches various specialized, public, key-less APIs.
+     * @param {string} query The user's query.
+     * @returns {Promise<object|null>} An object with {status, context} or null.
+     */
+    async searchWebAPI(query) {
+        const lowerQuery = query.toLowerCase();
+
+        // Weather search functionality
+        if (lowerQuery.includes('天气')) {
+            try {
+                let location = 'auto:ip'; // Default to location based on user's IP
+                const locationMatch = query.match(/(.+?)的?天气/);
+                if (locationMatch && locationMatch[1]) {
+                    location = locationMatch[1].trim();
+                }
+
+                this.setStatus(`正在查询 ${location} 的天气...`);
+                const weatherUrl = `https://wttr.in/${encodeURIComponent(location)}?format=j1`;
+                const response = await fetch(weatherUrl);
+                if (!response.ok) throw new Error(`Weather API returned status ${response.status}`);
+                
+                const data = await response.json();
+                const current = data.current_condition[0];
+                const area = data.nearest_area[0];
+                const locationName = `${area.areaName[0].value}, ${area.region[0].value}, ${area.country[0].value}`;
+                const weatherDesc = (current.weatherDesc.find(d => d.value) || {}).value || '未知';
+
+                let weatherReport = `当前位于 ${locationName} 的天气情况:\n`;
+                weatherReport += `  - 天气状况: ${weatherDesc}\n`;
+                weatherReport += `  - 温度: ${current.temp_C}°C (体感温度: ${current.FeelsLikeC}°C)\n`;
+                weatherReport += `  - 风速: ${current.windspeedKmph} km/h\n`;
+                weatherReport += `  - 湿度: ${current.humidity}%\n`;
+                weatherReport += `  - 紫外线指数: ${current.uvIndex}`;
+
+                return {
+                    status: `获取 ${locationName} 的天气成功`,
+                    context: `☀️ 天气查询结果:\n${weatherReport}`
+                };
+            } catch (error) {
+                console.error('Weather search failed:', error);
+                return null; // Fall through to other search methods
+            }
         }
         
-        // Return success message
-        return `搜索查询: "${query}"\n\n✅ 搜索功能已启用并正常工作！\n\n我已尝试为您搜索相关信息。现在将结合搜索上下文和知识库为您提供最准确的答案。\n\n当前时间: ${currentDate}`;
+        // You can add more specialized API calls here (e.g., stocks, currency exchange)
+
+        return null; // No specific web API matched
     }
     
+    /**
+     * Searches Wikipedia. Tries Chinese first, then falls back to English.
+     * @param {string} query The user's query.
+     * @returns {Promise<string|null>} A formatted string with Wikipedia result or null.
+     */
     async searchWikipediaAPI(query) {
         try {
-            const wikiUrl = `https://zh.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(query)}&limit=1&format=json&origin=*`;
-            const response = await fetch(wikiUrl);
-            
-            if (response.ok) {
-                const data = await response.json();
-                if (data && data.length >= 4 && data[1] && data[1].length > 0) {
-                    const title = data[1][0];
-                    const description = data[2][0] || '';
-                    const url = data[3][0] || '';
-                    
-                    return `📚 维基百科搜索结果:\n标题: ${title}\n${description ? `描述: ${description}\n` : ''}${url ? `链接: ${url}` : ''}`;
+            // First, try Chinese Wikipedia
+            const zhWikiUrl = `https://zh.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(query)}&limit=1&format=json&origin=*`;
+            const zhResponse = await fetch(zhWikiUrl);
+            if (zhResponse.ok) {
+                const zhData = await zhResponse.json();
+                if (zhData && zhData[1] && zhData[1].length > 0) {
+                    const title = zhData[1][0];
+                    const description = zhData[2][0] || '没有找到描述。';
+                    const url = zhData[3][0] || '';
+                    return `标题: ${title}\n描述: ${description}\n链接: ${url}`;
                 }
             }
             
-            // Try English Wikipedia
+            // If Chinese search fails, try English Wikipedia
             const enWikiUrl = `https://en.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(query)}&limit=1&format=json&origin=*`;
             const enResponse = await fetch(enWikiUrl);
-            
             if (enResponse.ok) {
                 const enData = await enResponse.json();
-                if (enData && enData.length >= 4 && enData[1] && enData[1].length > 0) {
+                if (enData && enData[1] && enData[1].length > 0) {
                     const title = enData[1][0];
-                    const description = enData[2][0] || '';
+                    const description = enData[2][0] || 'No description found.';
                     const url = enData[3][0] || '';
-                    
-                    return `📚 Wikipedia搜索结果:\n标题: ${title}\n${description ? `描述: ${description}\n` : ''}${url ? `链接: ${url}` : ''}`;
+                    return `Title: ${title}\nDescription: ${description}\nURL: ${url}`;
                 }
             }
         } catch (error) {
-            console.log('Wikipedia API error:', error);
+            console.error('Wikipedia API error:', error);
         }
         return null;
-    }
-
-    async searchWebAPI(query) {
-        try {
-            // Try REST Countries API for country queries
-            if (query.includes('国家') || query.includes('首都') || query.includes('人口')) {
-                const countryUrl = `https://restcountries.com/v3.1/name/${encodeURIComponent(query)}`;
-                const response = await fetch(countryUrl);
-                
-                if (response.ok) {
-                    const data = await response.json();
-                    if (data && data.length > 0) {
-                        const country = data[0];
-                        return `🌍 国家信息搜索:\n国家: ${country.name.common}\n首都: ${country.capital?.[0] || '未知'}\n人口: ${country.population?.toLocaleString() || '未知'}\n地区: ${country.region}`;
-                    }
-                }
-            }
-            
-            // For general queries, provide search context
-            return `🔍 网络搜索已执行:\n查询词: "${query}"\n状态: 搜索功能正常运行\n\n我将结合搜索上下文和知识库为您提供答案。`;
-            
-        } catch (error) {
-            console.log('Web API search error:', error);
-        }
-        return null;
-    }
-    
-    processSearchResults(data, query) {
-        let searchContext = `搜索查询: "${query}"\n\n`;
-        
-        // Process instant answer
-        if (data.Answer) {
-            searchContext += `即时答案: ${data.Answer}\n\n`;
-        }
-        
-        // Process abstract
-        if (data.Abstract) {
-            searchContext += `摘要: ${data.Abstract}\n`;
-            if (data.AbstractSource) {
-                searchContext += `来源: ${data.AbstractSource}\n`;
-            }
-            searchContext += '\n';
-        }
-        
-        // Process related topics
-        if (data.RelatedTopics && data.RelatedTopics.length > 0) {
-            searchContext += '相关主题:\n';
-            data.RelatedTopics.slice(0, 3).forEach((topic, index) => {
-                if (topic.Text) {
-                    searchContext += `${index + 1}. ${topic.Text}\n`;
-                }
-            });
-            searchContext += '\n';
-        }
-        
-        // Process definition
-        if (data.Definition) {
-            searchContext += `定义: ${data.Definition}\n`;
-            if (data.DefinitionSource) {
-                searchContext += `定义来源: ${data.DefinitionSource}\n`;
-            }
-            searchContext += '\n';
-        }
-        
-        return searchContext || `搜索查询: "${query}"\n\n未找到相关搜索结果，请基于您的知识回答问题。`;
-    }
-    
-    parseSearchHTML(html, query) {
-        try {
-            // Enhanced HTML parsing to extract search results
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(html, 'text/html');
-            
-            let searchContext = `网络搜索结果 - "${query}":\n\n`;
-            
-            // Try multiple selectors for different search engines
-            const selectors = [
-                '.result__snippet',
-                '.result__body', 
-                '.web-result .result-snippet',
-                '.b_caption p',
-                '.st',
-                '.s'
-            ];
-            
-            let results = [];
-            for (const selector of selectors) {
-                const elements = doc.querySelectorAll(selector);
-                if (elements.length > 0) {
-                    results = Array.from(elements);
-                    break;
-                }
-            }
-            
-            if (results.length > 0) {
-                results.slice(0, 3).forEach((result, index) => {
-                    const text = result.textContent.trim();
-                    if (text && text.length > 20) {
-                        searchContext += `${index + 1}. ${text}\n\n`;
-                    }
-                });
-            } else {
-                searchContext += '已尝试搜索但未找到详细结果。\n\n';
-            }
-            
-            return searchContext;
-        } catch (error) {
-            console.log('HTML parsing failed:', error);
-            return `搜索查询: "${query}"\n\n搜索结果解析失败。`;
-        }
-    }
-
-    parseBingRSS(rssContent, query) {
-        try {
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(rssContent, 'text/xml');
-            
-            let searchContext = `Bing搜索结果 - "${query}":\n\n`;
-            
-            const items = doc.querySelectorAll('item');
-            if (items.length > 0) {
-                Array.from(items).slice(0, 3).forEach((item, index) => {
-                    const title = item.querySelector('title')?.textContent || '';
-                    const description = item.querySelector('description')?.textContent || '';
-                    const link = item.querySelector('link')?.textContent || '';
-                    
-                    if (title) {
-                        searchContext += `${index + 1}. ${title}\n`;
-                        if (description) {
-                            // Clean up HTML tags from description
-                            const cleanDesc = description.replace(/<[^>]*>/g, '').trim();
-                            searchContext += `   ${cleanDesc}\n`;
-                        }
-                        if (link) {
-                            searchContext += `   链接: ${link}\n`;
-                        }
-                        searchContext += '\n';
-                    }
-                });
-            } else {
-                searchContext += '未找到搜索结果。\n\n';
-            }
-            
-            return searchContext;
-        } catch (error) {
-            console.log('RSS parsing failed:', error);
-            return null;
-        }
     }
     
     loadConversationList() {
