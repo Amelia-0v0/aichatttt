@@ -262,7 +262,7 @@ class OpenRouterChat {
         this.apiKey = apiKey;
         localStorage.setItem('openrouter_api_key', apiKey);
         this.hideApiKeyModal();
-        this.updateSendButton();
+        this.updateUI(); // Use updateUI to correctly update all related elements
         this.setStatus('API Key 已保存');
     }
     
@@ -959,22 +959,21 @@ class OpenRouterChat {
         
         return needsRealTimeInfo || isPriceQuery || isTimeQuery;
     }
-
-    updateSearchStatus() {
-        if (this.searchToggle) {
-            this.searchToggle.checked = this.searchEnabled;
-        }
-        if (this.searchStatus) {
-            if (this.searchEnabled) {
-                this.searchStatus.textContent = '搜索已开启';
-                this.searchStatus.title = '支持维基百科、网络搜索等多种搜索源';
-            } else {
-                this.searchStatus.textContent = '搜索已关闭';
-                this.searchStatus.title = '点击开关启用网络搜索功能';
-            }
-            this.searchStatus.parentElement.classList.toggle('search-enabled', this.searchEnabled);
-        }
+updateSearchStatus() {
+    if (this.searchToggle) {
+        this.searchToggle.checked = this.searchEnabled;
     }
+    if (this.searchStatus) {
+        if (this.searchEnabled) {
+            this.searchStatus.textContent = '搜索已开启';
+            this.searchStatus.title = '支持DuckDuckGo、维基百科、天气等多种搜索源';
+        } else {
+            this.searchStatus.textContent = '搜索已关闭';
+            this.searchStatus.title = '点击开关启用网络搜索功能';
+        }
+        this.searchStatus.parentElement.classList.toggle('search-enabled', this.searchEnabled);
+    }
+}
     
     /**
      * Performs a smart search by routing the query to the most appropriate API.
@@ -984,104 +983,318 @@ class OpenRouterChat {
      * @param {string} query The user's search query.
      * @returns {Promise<string|null>} A formatted string with search context, or null.
      */
-    async performSmartSearch(query) {
-        const currentDate = new Date().toLocaleDateString('zh-CN', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric',
-            weekday: 'long'
-        });
+async performSmartSearch(query) {
+    if (!this.searchEnabled) {
+        return null;
+    }
 
-        // 1. Handle time-based queries directly
-        const timeQueries = ['今天', '现在', '当前时间', '几号', '日期', '星期'];
-        if (timeQueries.some(keyword => query.includes(keyword))) {
-            return `搜索查询: "${query}"\n\n⏰ 当前时间信息: 今天是${currentDate}\n\n请基于这个准确的时间信息回答用户的问题。`;
+    const currentDate = new Date().toLocaleDateString('zh-CN', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        weekday: 'long'
+    });
+
+    // 检查缓存
+    const cacheKey = query.toLowerCase().trim();
+    if (this.searchCache.has(cacheKey)) {
+        const cachedResult = this.searchCache.get(cacheKey);
+        return `搜索查询: "${query}"\n\n${cachedResult}\n\n当前时间: ${currentDate}\n\n(来自缓存)`;
+    }
+
+    console.log('🔍 开始智能搜索:', query);
+
+    const searchResults = [];
+
+    // 1. 处理时间相关查询
+    if (this.isTimeQuery(query)) {
+        const timeResult = this.getCurrentTimeInfo();
+        searchResults.push(timeResult);
+    }
+
+    // 2. DuckDuckGo即时答案搜索
+    try {
+        this.setStatus('正在搜索DuckDuckGo...');
+        const ddgResult = await this.searchDuckDuckGo(query);
+        if (ddgResult) {
+            searchResults.push(ddgResult);
         }
+    } catch (error) {
+        console.error('DuckDuckGo搜索失败:', error);
+    }
 
-        // 2. Check cache for previous results
-        const cacheKey = query.toLowerCase().trim();
-        if (this.searchCache.has(cacheKey)) {
-            const cachedResult = this.searchCache.get(cacheKey);
-            return `搜索查询: "${query}"\n\n${cachedResult}\n\n当前时间: ${currentDate}\n\n(来自缓存)`;
+    // 3. 专用API搜索（天气等）
+    try {
+        const specialResult = await this.searchSpecialAPIs(query);
+        if (specialResult) {
+            searchResults.push(specialResult);
         }
+    } catch (error) {
+        console.error('专用API搜索失败:', error);
+    }
 
-        console.log('🔍 Starting smart search for:', query);
-
-        // 3. Try specialized Web APIs (e.g., weather, countries)
-        try {
-            const webResult = await this.searchWebAPI(query);
-            if (webResult && webResult.context) {
-                this.searchCache.set(cacheKey, webResult.context);
-                this.setStatus(webResult.status);
-                return `搜索查询: "${query}"\n\n${webResult.context}\n\n当前时间: ${currentDate}`;
-            }
-        } catch (error) {
-            console.error('Web API search failed:', error);
-        }
-
-        // 4. Fallback to Wikipedia for general knowledge
+    // 4. 维基百科搜索（作为补充）
+    if (searchResults.length === 0) {
         try {
             this.setStatus('正在搜索维基百科...');
             const wikiResult = await this.searchWikipediaAPI(query);
             if (wikiResult) {
                 const context = `📚 维基百科搜索结果:\n${wikiResult}`;
-                this.searchCache.set(cacheKey, context);
-                return `搜索查询: "${query}"\n\n${context}\n\n当前时间: ${currentDate}`;
+                searchResults.push({ content: context });
             }
         } catch (error) {
-            console.error('Wikipedia search failed:', error);
+            console.error('维基百科搜索失败:', error);
         }
-
-        // 5. Final fallback message if no specific results are found
-        return `搜索查询: "${query}"\n\nℹ️ 未在特定信息源中找到直接结果。现在将结合我的知识库为您提供最相关的答案。\n\n当前时间: ${currentDate}`;
     }
 
+    // 格式化并返回结果
+    const formattedResult = this.formatSearchResults(searchResults, query);
+    
+    // 缓存结果
+    if (formattedResult && searchResults.length > 0) {
+        this.setSearchCache(cacheKey, formattedResult);
+    }
+
+    this.setStatus('搜索完成');
+    return `搜索查询: "${query}"\n\n${formattedResult}\n\n当前时间: ${currentDate}`;
+}
     /**
      * Searches various specialized, public, key-less APIs.
+     * This version adds a geocoding step to get lat/lon from a city name.
      * @param {string} query The user's query.
      * @returns {Promise<object|null>} An object with {status, context} or null.
      */
+// 添加这些新方法到 ChatApp 类中
+
+async searchDuckDuckGo(query) {
+    try {
+        const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_redirect=1&no_html=1&skip_disambig=1`;
+        
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`DuckDuckGo API返回状态: ${response.status}`);
+        }
+
+        const data = await response.json();
+        
+        // 处理抽象摘要
+        if (data.AbstractText && data.AbstractText.trim()) {
+            return {
+                content: `🔍 DuckDuckGo搜索结果:\n${data.AbstractText}\n来源: ${data.AbstractSource || 'DuckDuckGo'}${data.AbstractURL ? '\n链接: ' + data.AbstractURL : ''}`
+            };
+        }
+
+        // 处理直接答案
+        if (data.Answer && data.Answer.trim()) {
+            return {
+                content: `💡 即时答案:\n${data.Answer}\n来源: DuckDuckGo`
+            };
+        }
+
+        // 处理定义
+        if (data.Definition && data.Definition.trim()) {
+            return {
+                content: `📖 定义:\n${data.Definition}\n来源: ${data.DefinitionSource || 'DuckDuckGo'}${data.DefinitionURL ? '\n链接: ' + data.DefinitionURL : ''}`
+            };
+        }
+
+        // 处理相关主题
+        if (data.RelatedTopics && data.RelatedTopics.length > 0) {
+            const topics = data.RelatedTopics
+                .filter(topic => topic.Text && topic.Text.trim())
+                .slice(0, 3)
+                .map(topic => `• ${topic.Text}`)
+                .join('\n');
+            
+            if (topics) {
+                return {
+                    content: `🔗 相关主题:\n${topics}\n来源: DuckDuckGo`
+                };
+            }
+        }
+
+        return null;
+    } catch (error) {
+        console.error('DuckDuckGo搜索错误:', error);
+        return null;
+    }
+}
+
+async searchSpecialAPIs(query) {
+    const lowerQuery = query.toLowerCase();
+
+    // 天气查询
+    if (lowerQuery.includes('天气')) {
+        return await this.searchWeatherImproved(query);
+    }
+
+    return null;
+}
+
+async searchWeatherImproved(query) {
+    try {
+        let locationName = 'auto:ip';
+        const locationMatch = query.match(/(.+?)的?天气/);
+        if (locationMatch && locationMatch[1]) {
+            locationName = locationMatch[1].trim();
+        }
+
+        this.setStatus(`正在获取 ${locationName} 的地理位置...`);
+
+        // 地理编码
+        const geocodeUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(locationName)}&count=1&language=zh&format=json`;
+        const geoResponse = await fetch(geocodeUrl);
+        
+        if (!geoResponse.ok) {
+            throw new Error(`地理编码API错误: ${geoResponse.status}`);
+        }
+
+        const geoData = await geoResponse.json();
+        if (!geoData.results || geoData.results.length === 0) {
+            throw new Error(`无法找到地点: ${locationName}`);
+        }
+
+        const location = geoData.results[0];
+        const { latitude, longitude, name, admin1, country } = location;
+        const displayName = `${name}${admin1 ? ', ' + admin1 : ''}, ${country}`;
+
+        this.setStatus(`正在查询 ${displayName} 的天气...`);
+
+        // 获取天气数据
+        const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true&hourly=temperature_2m,relativehumidity_2m,windspeed_10m&timezone=auto`;
+        const weatherResponse = await fetch(weatherUrl);
+        
+        if (!weatherResponse.ok) {
+            throw new Error(`天气API错误: ${weatherResponse.status}`);
+        }
+
+        const weatherData = await weatherResponse.json();
+        const current = weatherData.current_weather;
+
+        // 天气代码映射
+        const weatherCodes = {
+            0: '晴朗',
+            1: '基本晴朗',
+            2: '部分多云',
+            3: '阴天',
+            45: '雾',
+            48: '雾凇',
+            51: '小雨',
+            53: '中雨',
+            55: '大雨',
+            61: '小雨',
+            63: '中雨',
+            65: '大雨',
+            71: '小雪',
+            73: '中雪',
+            75: '大雪',
+            95: '雷暴'
+        };
+
+        const weatherDescription = weatherCodes[current.weathercode] || `天气代码: ${current.weathercode}`;
+        
+        const weatherReport = `🌤️ 天气信息:\n地点: ${displayName}\n天气: ${weatherDescription}\n温度: ${current.temperature}°C\n风速: ${current.windspeed} km/h\n更新时间: ${current.time}\n来源: Open-Meteo`;
+
+        return {
+            content: weatherReport
+        };
+    } catch (error) {
+        console.error('天气搜索错误:', error);
+        return {
+            content: `⚠️ 天气查询失败:\n无法获取天气信息: ${error.message}`
+        };
+    }
+}
+
+isTimeQuery(query) {
+    const timeKeywords = ['今天', '现在', '当前时间', '几号', '日期', '星期', '时间'];
+    return timeKeywords.some(keyword => query.includes(keyword));
+}
+
+getCurrentTimeInfo() {
+    const now = new Date();
+    const timeInfo = `⏰ 时间信息:\n当前时间: ${now.toLocaleString('zh-CN')}\n日期: ${now.toLocaleDateString('zh-CN', { 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric', 
+        weekday: 'long' 
+    })}\n时间: ${now.toLocaleTimeString('zh-CN')}\n来源: 系统时间`;
+
+    return {
+        content: timeInfo
+    };
+}
+
+formatSearchResults(results, query) {
+    if (!results || results.length === 0) {
+        return `ℹ️ 未找到"${query}"的相关信息。将基于我的知识库为您提供回答。`;
+    }
+
+    return results.map(result => result.content).join('\n\n---\n\n');
+}
+
+setSearchCache(key, value) {
+    this.searchCache.set(key, {
+        data: value,
+        timestamp: Date.now()
+    });
+}
     async searchWebAPI(query) {
         const lowerQuery = query.toLowerCase();
 
-        // Weather search functionality
         if (lowerQuery.includes('天气')) {
             try {
-                let location = 'auto:ip'; // Default to location based on user's IP
+                let locationName = 'auto:ip';
                 const locationMatch = query.match(/(.+?)的?天气/);
                 if (locationMatch && locationMatch[1]) {
-                    location = locationMatch[1].trim();
+                    locationName = locationMatch[1].trim();
                 }
 
-                this.setStatus(`正在查询 ${location} 的天气...`);
-                const weatherUrl = `https://wttr.in/${encodeURIComponent(location)}?format=j1`;
-                const response = await fetch(weatherUrl);
-                if (!response.ok) throw new Error(`Weather API returned status ${response.status}`);
-                
-                const data = await response.json();
-                const current = data.current_condition[0];
-                const area = data.nearest_area[0];
-                const locationName = `${area.areaName[0].value}, ${area.region[0].value}, ${area.country[0].value}`;
-                const weatherDesc = (current.weatherDesc.find(d => d.value) || {}).value || '未知';
+                this.setStatus(`正在获取 ${locationName} 的地理位置...`);
 
-                let weatherReport = `当前位于 ${locationName} 的天气情况:\n`;
-                weatherReport += `  - 天气状况: ${weatherDesc}\n`;
-                weatherReport += `  - 温度: ${current.temp_C}°C (体感温度: ${current.FeelsLikeC}°C)\n`;
-                weatherReport += `  - 风速: ${current.windspeedKmph} km/h\n`;
-                weatherReport += `  - 湿度: ${current.humidity}%\n`;
-                weatherReport += `  - 紫外线指数: ${current.uvIndex}`;
+                // Step 1: Geocoding (convert city name to lat/lon)
+                const geocodeUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(locationName)}&count=1&language=en&format=json`;
+                const geoResponse = await fetch(geocodeUrl);
+                if (!geoResponse.ok) throw new Error(`Geocoding API returned status ${geoResponse.status}`);
+                
+                const geoData = await geoResponse.json();
+                if (!geoData.results || geoData.results.length === 0) {
+                     throw new Error(`无法找到名为 "${locationName}" 的地点。`);
+                }
+                
+                const location = geoData.results[0];
+                const { latitude, longitude, name, admin1, country } = location;
+                const displayName = `${name}${admin1 ? ', ' + admin1 : ''}, ${country}`;
+
+                this.setStatus(`正在查询 ${displayName} 的天气...`);
+
+                // Step 2: Get weather using the coordinates
+                const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true&hourly=temperature_2m,relativehumidity_2m,windspeed_10m`;
+                const weatherResponse = await fetch(weatherUrl);
+                if (!weatherResponse.ok) throw new Error(`Weather API returned status ${weatherResponse.status}`);
+
+                const weatherData = await weatherResponse.json();
+                const current = weatherData.current_weather;
+
+                let weatherReport = `当前位于 ${displayName} 的天气情况:\n`;
+                weatherReport += `  - 天气状况代码: ${current.weathercode} (需要模型解读天气代码含义)\n`;
+                weatherReport += `  - 温度: ${current.temperature}°C\n`;
+                weatherReport += `  - 风速: ${current.windspeed} km/h\n`;
+                weatherReport += `  - 数据更新时间: ${current.time}`;
 
                 return {
-                    status: `获取 ${locationName} 的天气成功`,
+                    status: `获取 ${displayName} 的天气成功`,
                     context: `☀️ 天气查询结果:\n${weatherReport}`
                 };
             } catch (error) {
                 console.error('Weather search failed:', error);
-                return null; // Fall through to other search methods
+                const errorMessage = `天气信息获取失败: ${error.message}`;
+                return {
+                    status: '天气查询失败',
+                    context: `⚠️ **搜索错误**:\n${errorMessage}`
+                };
             }
         }
-        
-        // You can add more specialized API calls here (e.g., stocks, currency exchange)
 
         return null; // No specific web API matched
     }
@@ -1646,3 +1859,4 @@ if ('serviceWorker' in navigator) {
             .catch(() => console.log('Service Worker registration failed'));
     });
 }
+
